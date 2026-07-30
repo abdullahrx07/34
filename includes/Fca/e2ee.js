@@ -6,6 +6,28 @@ var urlMod = require("url");
 var http   = require("http");
 var crypto = require("crypto");
 
+// ─── ANSI colour helpers ───────────────────────────────────────────────────────
+var C = {
+    reset:   '\x1b[0m',
+    bold:    '\x1b[1m',
+    dim:     '\x1b[2m',
+    red:     '\x1b[31m',
+    green:   '\x1b[32m',
+    yellow:  '\x1b[33m',
+    blue:    '\x1b[34m',
+    magenta: '\x1b[35m',
+    cyan:    '\x1b[36m',
+    white:   '\x1b[37m',
+    bRed:     '\x1b[91m',
+    bGreen:   '\x1b[92m',
+    bYellow:  '\x1b[93m',
+    bBlue:    '\x1b[94m',
+    bMagenta: '\x1b[95m',
+    bCyan:    '\x1b[96m',
+    bWhite:   '\x1b[97m',
+    bgMagenta: '\x1b[45m',
+};
+
 // ── thread: detect E2EE JIDs (any string containing "@") ──────────────────
 function isE2EEChatJid(value) {
   return typeof value === "string" && value.indexOf("@") !== -1;
@@ -516,17 +538,29 @@ function createBridge(ctx) {
     state.client.on("error", function (err) {
       var msg = err && err.message ? err.message : String(err || "");
       if (/close 1006|unexpected EOF|ECONNRESET|ETIMEDOUT|read loop/i.test(msg)) {
-        log.warn("e2ee", "Transient network error — will reconnect:", msg); return;
+        console.log(
+          '\n' + C.bold + C.bgMagenta + C.white + ' 🔐 rx-fca ' + C.reset + ' ' +
+          C.bYellow + '⚠️  E2EE Bridge transient network error — will reconnect: ' + msg + C.reset
+        );
+        return;
       }
       _callUserCallback(state.lastGlobalCallback, err || new Error("Unknown E2EE error"));
     });
     state.client.on("disconnected", function (info) {
       state.connected = false; state.fullyReady = false;
-      log.warn("e2ee", "E2EE disconnected — reconnecting in 5s");
+      console.log(
+        '\n' + C.bold + C.bgMagenta + C.white + ' 🔐 rx-fca ' + C.reset + ' ' +
+        C.bRed + '⚠️  E2EE Bridge disconnected — reconnecting in 5s' + C.reset
+      );
       setTimeout(function () {
         if (!state.connectingPromise) {
           var cb = (ctx && ctx._globalCallback) || state.lastGlobalCallback;
-          connect(cb).catch(function (e) { log.error("e2ee", "Reconnect failed:", e && e.message ? e.message : e); });
+          connect(cb).catch(function (e) {
+            console.log(
+              '\n' + C.bold + C.bgMagenta + C.white + ' 🔐 rx-fca ' + C.reset + ' ' +
+              C.bRed + '❌  E2EE Bridge reconnect failed: ' + (e && e.message ? e.message : String(e)) + C.reset
+            );
+          });
         }
       }, 5000);
       _callUserCallback(state.lastGlobalCallback, null, { type: "e2ee_disconnected", isE2EE: true, data: info || null });
@@ -756,6 +790,45 @@ function patchApiForE2EE(api, ctx) {
   if (typeof api.downloadE2EEMedia !== "function") {
     api.downloadE2EEMedia = function (options) {
       return createBridge(ctx).downloadMedia(options);
+    };
+  }
+
+  if (!api._origGetUserInfo) {
+    api._origGetUserInfo = api.getUserInfo;
+    api.getUserInfo = function (id, callback) {
+      var isArray = Array.isArray(id);
+      var ids = isArray ? id : [id];
+      var cleanIds = [];
+      var cleanToOrig = {};
+
+      ids.forEach(function (v) {
+        var str = String(v);
+        var clean = _numericId(str);
+        cleanIds.push(clean);
+        cleanToOrig[clean] = str;
+      });
+
+      var argId = isArray ? cleanIds : cleanIds[0];
+
+      var returnPromise;
+      if (typeof callback !== "function") {
+        var _res, _rej;
+        returnPromise = new Promise(function (res, rej) { _res = res; _rej = rej; });
+        callback = function (err, data) { if (err) _rej(err); else _res(data); };
+      }
+
+      api._origGetUserInfo(argId, function (err, data) {
+        if (err || !data) return callback(err, data);
+        Object.keys(data).forEach(function (cleanKey) {
+          var origKey = cleanToOrig[cleanKey];
+          if (origKey && origKey !== cleanKey) {
+            data[origKey] = data[cleanKey];
+          }
+        });
+        callback(null, data);
+      });
+
+      return returnPromise;
     };
   }
 

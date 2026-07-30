@@ -367,19 +367,26 @@ function listenMqtt(defaultFuncs, api, ctx, globalCallback) {
         if (_reconnecting) return;
         _reconnecting = true;
         stopMqttSpinner();
-        log.error("listenMqtt", err);
+        console.log(
+            '\n' + C.bold + C.bgMagenta + C.white + ' 📡 rx-fca ' + C.reset + ' ' +
+            C.bold + C.bRed + '❌  MQTT Error: ' + C.reset +
+            (err && err.message ? err.message : String(err))
+        );
         try { mqttClient.end(true); } catch (_) { }
         if (ctx.globalOptions.autoReconnect) {
             setTimeout(function () { getSeqID(); }, 1000);
         } else {
-            globalCallback({ type: "stop_listen", error: "Connection refused: Server unavailable" }, null);
+            globalCallback({ type: "stop_listen", error: "Connection lost: " + (err && err.message ? err.message : String(err)) }, null);
         }
     });
     function _handleDrop(reason) {
         if (_reconnecting) return; // avoid double-reconnect if error + close both fire
         _reconnecting = true;
         stopMqttSpinner();
-        log.warn("listenMqtt", "Connection dropped (" + reason + "), reconnecting...");
+        console.log(
+            '\n' + C.bold + C.bgMagenta + C.white + ' 📡 rx-fca ' + C.reset + ' ' +
+            C.bYellow + '⚠️  MQTT Connection dropped (' + reason + '), reconnecting...' + C.reset
+        );
         try { mqttClient.end(true); } catch (_) { }
         if (ctx.globalOptions.autoReconnect) {
             setTimeout(function () { getSeqID(); }, 1000);
@@ -968,12 +975,18 @@ module.exports = function (defaultFuncs, api, ctx) {
 
                 if (retryCount < MAX_RETRIES) {
                     const delayMs = RETRY_DELAY * (retryCount + 1);
-                    log.warn("getSeqId", `Retry ${retryCount + 1}/${MAX_RETRIES} after ${delayMs}ms due to: ${msg}`);
+                    console.log(
+                        C.bold + C.bgMagenta + C.white + ' 📡 rx-fca ' + C.reset + ' ' +
+                        C.bYellow + `⚠️  getSeqId Retry ${retryCount + 1}/${MAX_RETRIES} after ${delayMs}ms due to: ${msg}` + C.reset
+                    );
 
                     return new Promise((resolve) => setTimeout(resolve, delayMs))
                         .then(function () {
                             if (retryCount === 0 && ctx.loggedIn) {
-                                log.info("getSeqId", "Refreshing session before retry to fix possible cookie/DTSG desync...");
+                                console.log(
+                                    C.bold + C.bgMagenta + C.white + ' 📡 rx-fca ' + C.reset + ' ' +
+                                    C.dim + "Refreshing session before retry to fix possible cookie/DTSG desync..." + C.reset
+                                );
                                 return utils.get("https://www.facebook.com/", ctx.jar, null, ctx.globalOptions, ctx)
                                     .then(utils.saveCookies(ctx.jar))
                                     .then(function () {
@@ -983,13 +996,19 @@ module.exports = function (defaultFuncs, api, ctx) {
                                                     ctx.fb_dtsg = freshDtsg;
                                                     ctx.ttstamp = "2";
                                                     for (let j = 0; j < ctx.fb_dtsg.length; j++) ctx.ttstamp += ctx.fb_dtsg.charCodeAt(j);
-                                                    log.info("getSeqId", "Successfully refreshed fb_dtsg!");
+                                                    console.log(
+                                                        C.bold + C.bgMagenta + C.white + ' 📡 rx-fca ' + C.reset + ' ' +
+                                                        C.bGreen + "Successfully refreshed fb_dtsg!" + C.reset
+                                                    );
                                                 }
                                             });
                                         }
                                     })
                                     .catch(function (refreshErr) {
-                                        log.warn("getSeqId", `Session refresh failed: ${refreshErr && refreshErr.message ? refreshErr.message : String(refreshErr)}`);
+                                        console.log(
+                                            C.bold + C.bgMagenta + C.white + ' 📡 rx-fca ' + C.reset + ' ' +
+                                            C.bRed + `❌  Session refresh failed: ${refreshErr && refreshErr.message ? refreshErr.message : String(refreshErr)}` + C.reset
+                                        );
                                     });
                             }
                         })
@@ -1000,7 +1019,10 @@ module.exports = function (defaultFuncs, api, ctx) {
 
                 if (ctx.globalOptions.autoReconnect) {
                     const delayMs = Math.min(30000 * Math.pow(2, Math.min(retryCount - MAX_RETRIES, 5)), 120000);
-                    log.warn("getSeqId", `Max retries reached. Persistent auto-reconnect active. Waiting ${delayMs / 1000}s before trying again...`);
+                    console.log(
+                        C.bold + C.bgMagenta + C.white + ' 📡 rx-fca ' + C.reset + ' ' +
+                        C.bYellow + `⚠️  Max retries reached. Persistent auto-reconnect active. Waiting ${delayMs / 1000}s before trying again...` + C.reset
+                    );
 
                     return new Promise((resolve) => setTimeout(resolve, delayMs))
                         .then(function () {

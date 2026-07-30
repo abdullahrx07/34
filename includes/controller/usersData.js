@@ -189,9 +189,11 @@ module.exports = async function (databaseType, userModel, api, fakeGraphql) {
                                                                 if (checkData)
                                                                                                 return getNameInDB(userID);
 
+                                                                const cleanID = typeof userID === 'string' && userID.includes('@') ? userID.split('@')[0].split(':')[0] : userID;
+
                                                                 try {
-                                                                                                const user = await axios.post(`https://www.facebook.com/api/graphql/?q=${`node(${userID}){name}`}`);
-                                                                                                return user.data[userID].name;
+                                                                                                const user = await axios.post(`https://www.facebook.com/api/graphql/?q=${`node(${cleanID}){name}`}`);
+                                                                                                return user.data[cleanID].name;
                                                                 }
                                                                 catch (error) {
                                                                                                 return getNameInDB(userID);
@@ -206,18 +208,19 @@ module.exports = async function (databaseType, userModel, api, fakeGraphql) {
                                                                                                                                 message: `The first argument (userID) must be a valid ID, not ${typeof userID}`
                                                                                                 });
                                                                 }
+                                                                const cleanID = typeof userID === 'string' && userID.includes('@') ? userID.split('@')[0].split(':')[0] : userID;
                                                                 const FB_ACCESS_TOKEN = "6628568379%7Cc1e620fa708a1d5696fb991c1bde5662";
                                                                 try {
                                                                                                 const user = await axios.post(`https://www.facebook.com/api/graphql/`, null, {
                                                                                                                                 params: {
                                                                                                                                                                 doc_id: "5341536295888250",
-                                                                                                                                                                variables: JSON.stringify({ height: 500, scale: 1, userID, width: 500 })
+                                                                                                                                                                variables: JSON.stringify({ height: 500, scale: 1, userID: cleanID, width: 500 })
                                                                                                                                 }
                                                                                                 });
                                                                                                 return user.data.data.profile.profile_picture.uri;
                                                                 }
                                                                 catch (err) {
-                                                                                                return `https://graph.facebook.com/${userID}/picture?height=500&width=500&access_token=${FB_ACCESS_TOKEN}`;
+                                                                                                return `https://graph.facebook.com/${cleanID}/picture?height=500&width=500&access_token=${FB_ACCESS_TOKEN}`;
                                                                 }
                                 }
 
