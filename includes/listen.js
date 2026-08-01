@@ -111,6 +111,15 @@ module.exports = (
 		}
 		// ── end E2EE status ───────────────────────────────────────────────────
 
+		// Diagnostic: confirm every incoming message-type event actually reaches
+		// this point (helps distinguish "event never arrived" from "arrived but
+		// got blocked/ignored further down"). Cheap enough to always leave on.
+		if (["message", "message_reply", "e2ee_message"].includes(event.type)) {
+			console.log(
+				`[EVENT] type=${event.type} isE2EE=${!!event.isE2EE} isGroup=${event.isGroup} threadID=${event.threadID} senderID=${event.senderID}`
+			);
+		}
+
 		// Anti Inbox
 		// event.isGroup here is only the E2EE bridge's best-effort JID-suffix guess
 		// (see e2ee.js _mapMsg) — for @msgr JIDs that guess can't tell a DM from a
