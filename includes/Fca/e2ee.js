@@ -217,29 +217,7 @@ function _numericId(jid) {
 
 function _mapMsg(ev) {
   var text = ev && ev.text ? String(ev.text) : "";
-  var chatJidStr = ev && ev.chatJid ? String(ev.chatJid) : "";
-  var rawIsGroup = /@(?:g\.us|group\.facebook\.com)$/i.test(chatJidStr);
-  // For 1-1 E2EE DMs the native bridge appears to omit `senderId` entirely
-  // (unlike group chats, where it's required to tell participants apart).
-  // Reference implementation (fca-eryxenx's own e2ee/index.js) resolves this
-  // exact case as `msg.senderId || senderJid.split(...)[0]` — i.e. it prefers
-  // the real senderJid field over any guess. Our raw event carries the same
-  // senderJid field (used elsewhere below for _e2eeSenderJidMap), so do the
-  // same: prefer senderJid, and only fall back to chatJid (correct only for
-  // non-group 1-1 chats, where the chat partner IS the sender) if even that
-  // is missing. Without some fallback here, sid ends up as "" for every
-  // inbox DM, which then breaks senderID-dependent logic (role checks,
-  // userData creation, etc.) downstream and makes the bot look silent.
-  var sid;
-  if (ev && ev.senderId != null) {
-    sid = _numericId(String(ev.senderId));
-  } else if (ev && ev.senderJid) {
-    sid = _numericId(String(ev.senderJid));
-  } else if (!rawIsGroup && chatJidStr) {
-    sid = _numericId(chatJidStr);
-  } else {
-    sid = "";
-  }
+  var sid  = ev && ev.senderId != null ? _numericId(String(ev.senderId)) : "";
   var tid  = ev && ev.chatJid  ? String(ev.chatJid)
            : (ev && ev.threadId != null ? String(ev.threadId) : "");
   var messageReply = null;
@@ -484,24 +462,7 @@ function createBridge(ctx) {
     }
 
     state.client.on("e2eeMessage", async function (ev) {
-      // TEMP DIAGNOSTIC — remove once inbox-vs-group silence is root-caused.
-      try {
-        console.log("[E2EE][raw e2eeMessage]", JSON.stringify({
-          chatJid: ev && ev.chatJid, senderId: ev && ev.senderId,
-          id: ev && ev.id, hasText: !!(ev && ev.text)
-        }));
-      } catch (_) {}
       var mapped = _mapMsg(ev);
-
-      // Skip echoes of the bot's own outgoing e2ee messages. This matters
-      // more now that a missing senderId on 1-1 DMs falls back to chatJid
-      // (see _mapMsg) — without this guard, an echoed self-sent message in
-      // a DM would look like it came from the other person and the bot
-      // could end up replying to itself.
-      if (mapped.messageID && global._e2eeBotSentMsgIds && global._e2eeBotSentMsgIds.has(String(mapped.messageID))) {
-        return;
-      }
-
       global._e2eeMessageMap   = global._e2eeMessageMap   || new Map();
       global._e2eeSenderJidMap = global._e2eeSenderJidMap || new Map();
       if (mapped.messageID && mapped.threadID)
@@ -901,18 +862,56 @@ function patchApiForE2EE(api, ctx) {
         callback = function (err, data) { if (err) _rej(err); else _res(data); };
       }
 
-      // ── @msgr path ─────────────────────────────────────────────────────
-      // NOTE: this used to delegate to the original GraphQL getThreadInfo
-      // using the numeric JID prefix as thread_fbid. Confirmed (via the
-      // upstream fca-eryxenx library's own getThreadInfo.js comments) that
-      // this GraphQL endpoint *always* throws "No message_thread in GraphQL
-      // response" for E2EE threads — group or 1-1 alike. That means every
-      // single E2EE message was silently paying for one guaranteed-failing
-      // network round-trip (plus more from any onChat auto-handler that also
-      // calls getThreadInfo) before falling through to the cache path below.
-      // Skip straight to the cache-based synthetic response instead.
+      // ── @msgr path: delegate to original GraphQL getThreadInfo ──────────
+      // The numeric prefix of a @msgr JID is the Facebook thread_fbid that
+      // the GraphQL endpoint understands.  Call it, then patch the response
+      // so callers see the E2EE JID as threadID (not the bare numeric ID).
       if (isMsgr) {
-        return _buildFromCache();
+        var numericThreadId = jid.split("@")[0].split(":")[0];
+        return api._origGetThreadInfo(numericThreadId, function (err, info) {
+          if (err || !info) {
+            // GraphQL failed — fall through to cache-based path
+            return _buildFromCache();
+          }
+          // Patch the response: restore JID as threadID and mark as E2EE
+          info.threadID = jid;
+          info.isE2EE   = true;
+          if (!info.e2ee) info.e2ee = {};
+          info.e2ee.chatJid = jid;
+
+          // Save to fcaDatabase!
+          try {
+            var fcaDatabase = require('./database/fcaDatabase');
+            var dbUserInfo = {};
+            if (Array.isArray(info.userInfo)) {
+              info.userInfo.forEach(function (u) {
+                if (u && u.id) {
+                  dbUserInfo[String(u.id)] = {
+                    id: String(u.id),
+                    name: u.name || ''
+                  };
+                }
+              });
+            }
+            fcaDatabase.saveThread(jid, {
+              participantIDs: info.participantIDs,
+              userInfo: dbUserInfo
+            });
+          } catch (_) {}
+
+          // Also seed the participant cache so future message-sender tracking
+          // works even for members who haven't spoken yet.
+          if (Array.isArray(info.participantIDs) && info.participantIDs.length > 0) {
+            global._e2eeThreadParticipants = global._e2eeThreadParticipants || new Map();
+            if (!global._e2eeThreadParticipants.has(jid))
+              global._e2eeThreadParticipants.set(jid, new Map());
+            var ptMap = global._e2eeThreadParticipants.get(jid);
+            info.participantIDs.forEach(function (uid) {
+              if (!ptMap.has(String(uid))) ptMap.set(String(uid), String(uid));
+            });
+          }
+          callback(null, info);
+        });
       }
 
       // ── @g.us / other path: synthetic response from message-sender cache ─
